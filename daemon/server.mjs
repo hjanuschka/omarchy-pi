@@ -239,7 +239,7 @@ function snapshot() {
     messages: s.messages
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({ role: m.role, text: displayText(m).slice(0, TEXT_LIMIT), ts: m.timestamp }))
-      .filter((m) => m.text)
+      .filter((m) => m.text.trim())
       .slice(-HISTORY_LIMIT)
       .map((m) => (m.role === "assistant" ? { ...m, html: renderMarkdown(m.text) } : m)),
   };
@@ -272,7 +272,7 @@ function onEvent(e) {
         clearTimeout(renderTimer);
         renderTimer = null;
         partial = null;
-        const text = textOf(e.message);
+        const text = textOf(e.message).trim() ? textOf(e.message) : "";
         broadcast({ ev: "end", text, html: text ? renderMarkdown(text) : "", ts: e.message.timestamp ?? Date.now() });
       }
       return;
@@ -352,6 +352,15 @@ async function refreshRecent() {
   const mine = all.find((i) => i.path === current);
   const self = mine ? chip(mine) : { path: current, title: snapshot().title || "new", current: true };
   recent = current ? [self, ...others] : others;
+  // Chats in the same folder share its name; tell them apart by their opening message.
+  const byPath = new Map(all.map((i) => [i.path, i]));
+  const counts = {};
+  for (const c of recent) counts[c.title] = (counts[c.title] ?? 0) + 1;
+  for (const c of recent) {
+    const info = byPath.get(c.path);
+    if (info && !info.name && counts[c.title] > 1)
+      c.title = info.firstMessage.replace(/\s+/g, " ").slice(0, 24) || c.title;
+  }
   broadcast({ ev: "recent", list: recent });
 }
 

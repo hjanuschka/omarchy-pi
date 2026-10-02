@@ -247,8 +247,8 @@ Item {
   PanelWindow {
     visible: root.opened
     // No anchors: the compositor centers the surface on the focused monitor.
-    implicitWidth: Style.space(460)
-    implicitHeight: Style.space(620)
+    implicitWidth: Style.space(640)
+    implicitHeight: Style.space(680)
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "omarchy-pi"
