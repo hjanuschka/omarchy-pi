@@ -228,7 +228,7 @@ function snapshot() {
   const s = session();
   return {
     ev: "snapshot",
-    title: s.sessionName || pretty(cwdOf(s)).replace(/^\d{4}-\d{2}-\d{2}-/, ""),
+    title: s.sessionName || chipTitle(cwdOf(s)) || pretty(cwdOf(s)),
     workspace: pretty(cwdOf(s)),
     name: s.sessionName || "",
     model: s.model?.name || s.model?.id || "",
@@ -333,14 +333,19 @@ async function bind() {
   refreshRecent();
 }
 
+// A chat is named after its workspace: the try slug, or the folder it runs in.
+function chipTitle(cwd) {
+  if (!cwd || cwd === HOME) return "";
+  return cwd.startsWith(CHATTY + "/") ? path.basename(cwd).replace(/^\d{4}-\d{2}-\d{2}-/, "") : path.basename(cwd);
+}
+
 // Quick-switch chips: the current chat plus the most recent others.
 async function refreshRecent() {
   const current = session().sessionFile;
   const all = (await SessionManager.listAll()).sort((a, b) => b.modified - a.modified);
   const chip = (i) => ({
     path: i.path,
-    title: i.name || (i.cwd.startsWith(CHATTY + "/") ? path.basename(i.cwd).replace(/^\d{4}-\d{2}-\d{2}-/, "") : "")
-      || i.firstMessage.replace(/\s+/g, " ").slice(0, 24) || "chat",
+    title: i.name || chipTitle(i.cwd) || i.firstMessage.replace(/\s+/g, " ").slice(0, 24) || "chat",
     current: i.path === current,
   });
   const others = all.filter((i) => i.path !== current).slice(0, current ? 4 : 5).map(chip);

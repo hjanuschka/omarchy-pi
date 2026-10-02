@@ -4,6 +4,10 @@ A small floating chat for [Omarchy](https://omarchy.org), backed by a
 persistent [pi](https://pi.dev) agent. Summon it with a key, ask, hide it: the
 agent keeps working and the thread is there when you come back.
 
+<p align="center">
+  <img src="docs/screenshots/chat.png" width="420" alt="omarchy-pi chat with a markdown reply and highlighted code">
+</p>
+
 ```
 Super+Shift+Space -> Chat.qml --socat--> $XDG_RUNTIME_DIR/omarchy-pi.sock -> daemon/server.mjs (pi SDK)
 ```
@@ -22,6 +26,18 @@ Super+Shift+Space -> Chat.qml --socat--> $XDG_RUNTIME_DIR/omarchy-pi.sock -> dae
   [tobi/try](https://github.com/tobi/try)), e.g.
   `~/lab/chatty/2026-10-02-redis-pool`, which is the agent's working
   directory. Or start a chat in any folder.
+
+## Screenshots
+
+| Markdown & tables | Slash commands | Chats |
+|---|---|---|
+| <img src="docs/screenshots/markdown.png" width="260" alt="markdown table"> | <img src="docs/screenshots/slash-commands.png" width="260" alt="slash command completion"> | <img src="docs/screenshots/chats.png" width="260" alt="chat picker"> |
+
+| New chat menu | New in folder | |
+|---|---|---|
+| <img src="docs/screenshots/new-menu.png" width="260" alt="new chat menu"> | <img src="docs/screenshots/folders.png" width="260" alt="folder picker"> | |
+
+Screenshots use a sandboxed `HOME` with mock chats and a local Qwen model.
 
 ## Requirements
 
