@@ -101,6 +101,10 @@ Logs: `journalctl --user -u omarchy-pi -f`.
 
 - The agent is your pi agent: it runs tools with your user's permissions,
   exactly like `pi` in a terminal. Extensions in `~/.pi` run unsandboxed.
+- At startup the daemon adopts your login shell's environment (`$SHELL -ilc
+  env`), so tools see the same `PATH` and exports as in a terminal, including
+  anything your shell config exports. If the shell does not answer within 5s,
+  the service environment is kept.
 - The control socket is created mode `0600` in `$XDG_RUNTIME_DIR`; anyone who
   can connect to it can drive the agent.
 - Model output is never interpreted as HTML: raw HTML in replies is escaped

@@ -29,7 +29,7 @@ import {
   getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { renderMarkdown } from "./render.mjs";
 
@@ -516,6 +516,36 @@ async function handle(client, msg) {
 }
 
 // ------------------------------------------------------------- boot
+
+// pi in a terminal inherits the shell's environment; a systemd service starts
+// with whatever install.sh captured, which goes stale and lacks tool-manager
+// state (e.g. mise's PATH bookkeeping, which made a `gh` wrapper loop forever).
+// Adopt the login shell's environment so tools behave like they do in a terminal.
+function adoptLoginShellEnv() {
+  const shell = process.env.SHELL || "/bin/bash";
+  const marker = "\0__OMARCHY_PI_ENV__\0";
+  return new Promise((resolve) => {
+    const child = spawn(shell, ["-ilc", `printf '${marker.replace(/\0/g, "\\0")}'; env -0`], {
+      cwd: HOME, stdio: ["ignore", "pipe", "ignore"],
+    });
+    let out = "";
+    const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
+    child.stdout.on("data", (d) => { out += d; });
+    child.on("close", () => {
+      clearTimeout(timer);
+      const at = out.indexOf(marker);
+      if (at < 0) return resolve(console.error(`omarchy-pi: could not read ${shell} environment; keeping the service's`));
+      const skip = new Set(["PWD", "OLDPWD", "SHLVL", "_"]);
+      for (const entry of out.slice(at + marker.length).split("\0")) {
+        const eq = entry.indexOf("=");
+        if (eq > 0 && !skip.has(entry.slice(0, eq))) process.env[entry.slice(0, eq)] = entry.slice(eq + 1);
+      }
+      console.log(`omarchy-pi: using the ${path.basename(shell)} login environment`);
+      resolve();
+    });
+  });
+}
+await adoptLoginShellEnv();
 
 // A misbehaving extension must not take the agent down with it.
 process.on("unhandledRejection", (err) => console.error("unhandled:", err));
