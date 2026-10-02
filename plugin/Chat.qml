@@ -23,6 +23,9 @@ Item {
   property int streamIndex: -1
   property bool replying: false         // the streaming reply has visible text
   property bool stick: true             // follow new output until the user scrolls up
+  // Scroll feel: pixel-delta multiplier while fingers move, and momentum strength.
+  property real scrollGain: 1.6
+  property real flingGain: 1.0
   property string pickKind: ""          // "" = chat, else "sessions" | "models" | "folders"
   property bool newMenuOpen: false
   property var commands: []
@@ -385,7 +388,9 @@ Item {
           model: messages
           onCountChanged: if (root.stick) Qt.callLater(positionViewAtEnd)
           onContentHeightChanged: if (root.stick) positionViewAtEnd()
-          onContentYChanged: if (moving || wheel.active) root.stick = atYEnd
+          onContentYChanged: if (moving || wheel.scrolling) root.stick = atYEnd
+          maximumFlickVelocity: 12000
+          flickDeceleration: 2200
           FastWheel { id: wheel; view: chat }
 
           delegate: Item {
@@ -647,6 +652,8 @@ Item {
           clip: true
           spacing: Style.space(2)
           model: picks
+          maximumFlickVelocity: 12000
+          flickDeceleration: 2200
           FastWheel { view: pickList }
           delegate: Rectangle {
             required property int index
@@ -740,22 +747,40 @@ Item {
     }
   }
 
-  // Qt's default wheel handling animates fixed steps, which feels sluggish with
-  // high-resolution mice and touchpads. Apply pixel deltas 1:1 (the device
-  // supplies its own momentum); classic wheels get a fixed step per notch.
+  // Qt's default wheel handling animates fixed steps, and Qt does no momentum
+  // for touchpad scrolls (the Magic Mouse daemon replays scrolls as a virtual
+  // touchpad and leaves momentum to the app, like Chrome does). So: move by
+  // pixel deltas 1:1 while the fingers are down, then fling with the stroke's
+  // velocity once events stop. Classic wheels get a fixed step per notch.
   component FastWheel: WheelHandler {
+    id: handler
     required property Flickable view
-    readonly property bool active: activeTimer.running
+    readonly property bool scrolling: idle.running
+    property real velocity: 0          // px/s, same sign as contentY decrease
+    property real lastTime: 0
     target: null
     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
     onWheel: event => {
-      var dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 120 * Style.space(90)
+      var touch = event.pixelDelta.y !== 0
+      var dy = touch ? event.pixelDelta.y * root.scrollGain : event.angleDelta.y / 120 * Style.space(100)
       var max = view.originY + Math.max(0, view.contentHeight - view.height)
       view.cancelFlick()
       view.contentY = Math.max(view.originY, Math.min(max, view.contentY - dy))
-      activeTimer.restart()
+      var now = Date.now()
+      var dt = Math.max(4, now - lastTime)
+      var v = dy * 1000 / dt
+      velocity = touch && dt < 80 ? velocity * 0.6 + v * 0.4 : (touch ? v : 0)
+      lastTime = now
+      event.accepted = true
+      idle.restart()
     }
-    property Timer activeTimer: Timer { interval: 150 }
+    property Timer idle: Timer {
+      interval: 60
+      onTriggered: {
+        if (Math.abs(handler.velocity) > 150) handler.view.flick(0, handler.velocity * root.flingGain)
+        handler.velocity = 0
+      }
+    }
   }
 
   component MenuItem: Rectangle {
