@@ -507,4 +507,8 @@ net.createServer((client) => {
   });
   client.on("close", () => clients.delete(client));
   client.on("error", () => clients.delete(client));
-}).listen(SOCKET, () => console.log(`omarchy-pi listening on ${SOCKET}, workspaces in ${CHATTY}`));
+}).listen(SOCKET, () => {
+  // Whoever can connect drives the agent: owner only.
+  fs.chmodSync(SOCKET, 0o600);
+  console.log(`omarchy-pi listening on ${SOCKET}, workspaces in ${CHATTY}`);
+});

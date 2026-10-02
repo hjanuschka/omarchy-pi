@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "hjanuschka.omarchy-pi",
+  "name": "Omarchy Pi",
+  "version": "0.2.0",
+  "author": "Helmut Januschka",
+  "license": "MIT",
+  "description": "A small floating chat with a persistent pi agent: pi SDK daemon on your ~/.pi config, markdown replies, slash commands, model switching, and try-style chat workspaces.",
+  "kinds": [
+    "overlay"
+  ],
+  "entryPoints": {
+    "overlay": "Chat.qml"
+  }
+}

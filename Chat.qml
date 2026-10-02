@@ -16,6 +16,7 @@ Item {
   readonly property string socketPath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/omarchy-pi.sock"
   property bool opened: false
   property bool connected: false
+  property bool needsInstall: false     // the systemd service is missing
   property bool busy: false
   property string title: ""
   property string model: ""
@@ -87,6 +88,7 @@ Item {
     switch (m.ev) {
     case "snapshot":
       connected = true
+      needsInstall = false
       busy = m.busy
       title = m.title || ""
       model = m.model || ""
@@ -220,7 +222,11 @@ Item {
   }
 
   // Make sure the daemon is up, then reconnect.
-  Process { id: starter; command: ["systemctl", "--user", "start", "omarchy-pi.service"] }
+  Process {
+    id: starter
+    command: ["systemctl", "--user", "start", "omarchy-pi.service"]
+    onExited: exitCode => root.needsInstall = exitCode !== 0
+  }
   Process { id: copier }
   Timer { id: retry; interval: 800; onTriggered: if (root.opened && !conn.running) conn.running = true }
   Timer { id: searchDebounce; interval: 150; onTriggered: root.send({ op: "pick", kind: root.pickKind, query: search.text }) }
@@ -566,7 +572,9 @@ Item {
               width: parent.width
               horizontalAlignment: Text.AlignHCenter
               wrapMode: Text.Wrap
-              text: root.connected ? "ask pi anything\n/ for commands" : "connecting…"
+              text: root.connected ? "ask pi anything\n/ for commands"
+                : root.needsInstall ? "daemon not installed\nrun install.sh in\n" + Qt.resolvedUrl(".").toString().replace("file://", "").replace(Quickshell.env("HOME"), "~")
+                : "connecting…"
               color: root.fg
               opacity: 0.45
               font { family: root.font; pixelSize: Style.font.body }
