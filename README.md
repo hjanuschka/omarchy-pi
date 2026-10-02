@@ -22,6 +22,11 @@ Panel:
   `/skill:*`, and prompt templates. Tab/Enter completes, Up/Down selects.
 - Built-ins: `/model [query]`, `/thinking [level]`, `/new [name]`,
   `/sessions [query]`, `/compact [instructions]`, `/name <name>`.
+- Chat bubbles with timestamps; replies are markdown rendered by the daemon
+  (marked + highlight.js, colors from the current Omarchy theme), with copy.
+- Five chips under the header switch between recent chats in one click.
+- `new` starts a try-style chat; its chevron offers `new in folder…`, a fuzzy
+  folder picker over zoxide + past session dirs (type `~/…` to browse).
 - Model pill: fuzzy model picker. `chats`: fuzzy + recency + full-text search
   over every pi session, ending in `+ new: <query>`. `new`: fresh workspace.
 

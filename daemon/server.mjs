@@ -6,11 +6,12 @@
 //
 // client -> daemon:
 //   {op:"sync"} {op:"prompt",text} {op:"abort"} {op:"commands"}
-//   {op:"pick",kind:"sessions"|"models",query}
-//   {op:"resume",path} {op:"new",name} {op:"opendir",dir}
+//   {op:"pick",kind:"sessions"|"models"|"folders",query}
+//   {op:"resume",path} {op:"new",name} {op:"newin",dir}
 //   {op:"model",provider,id} {op:"thinking",level}
 // daemon -> client:
-//   {ev:"snapshot",...} {ev:"start"} {ev:"delta",text} {ev:"end",text}
+//   {ev:"snapshot",...} {ev:"start"} {ev:"delta",text} {ev:"html",html}
+//   {ev:"end",text,html,ts} {ev:"recent",list}
 //   {ev:"tool",name,detail} {ev:"busy",value} {ev:"info",text} {ev:"error",text}
 //   {ev:"commands",list} {ev:"pick",kind,query,items} {ev:"view",kind,query}
 import fs from "node:fs";
@@ -27,6 +28,9 @@ import {
   getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { renderMarkdown } from "./render.mjs";
 
 const HOME = os.homedir();
 const CHATTY = process.env.OMARCHY_PI_ROOT || path.join(HOME, "lab/chatty");
@@ -68,6 +72,8 @@ const clients = new Set();
 let runtime;
 let unsubscribe;
 let partial = null; // text of the assistant reply currently streaming
+let renderTimer = null;
+let recent = [];
 
 const send = (client, msg) => client.write(JSON.stringify(msg) + "\n");
 const broadcast = (msg) => clients.forEach((c) => send(c, msg));
@@ -158,6 +164,39 @@ function pickModels(query) {
   }));
 }
 
+// Folder candidates: zoxide's frecent dirs plus every pi session cwd. A typed
+// path lists that directory's children so the picker doubles as a browser.
+const execFileP = promisify(execFile);
+const expand = (p) => (p.startsWith("~") ? path.join(HOME, p.slice(1)) : p);
+
+async function pickFolders(query) {
+  const typed = /^[~/]/.test(query) ? expand(query) : null;
+  if (typed) {
+    const base = typed.endsWith("/") ? typed : path.dirname(typed);
+    const leaf = typed.endsWith("/") ? "" : path.basename(typed);
+    let children = [];
+    try {
+      children = fs.readdirSync(base, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+        .map((d) => path.join(base, d.name));
+    } catch {}
+    const dirs = rank(children, leaf, (d) => path.basename(d));
+    if (fs.existsSync(typed) && fs.statSync(typed).isDirectory()) dirs.unshift(typed.replace(/\/$/, "") || "/");
+    return dirs.slice(0, 60).map(folderItem);
+  }
+  let zoxide = [];
+  try { zoxide = (await execFileP("zoxide", ["query", "-l"])).stdout.split("\n").filter(Boolean); } catch {}
+  const cwds = (await SessionManager.listAll()).sort((a, b) => b.modified - a.modified).map((i) => i.cwd);
+  const dirs = [...new Set([...cwds, ...zoxide])].filter((d) => d && fs.existsSync(d));
+  return rank(dirs, query, (d) => d.replace(HOME, "~")).slice(0, 60).map(folderItem);
+}
+
+const folderItem = (dir) => ({
+  title: path.basename(dir) || dir,
+  subtitle: dir.replace(HOME, "~"),
+  action: { op: "newin", dir },
+});
+
 function commandList() {
   const s = session();
   const list = BUILTINS.map((c) => ({ ...c, source: "builtin" }));
@@ -196,11 +235,13 @@ function snapshot() {
     thinking: s.thinkingLevel,
     busy: s.isStreaming,
     partial,
+    partialHtml: partial ? renderMarkdown(partial) : "",
     messages: s.messages
       .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role, text: displayText(m).slice(0, TEXT_LIMIT) }))
+      .map((m) => ({ role: m.role, text: displayText(m).slice(0, TEXT_LIMIT), ts: m.timestamp }))
       .filter((m) => m.text)
-      .slice(-HISTORY_LIMIT),
+      .slice(-HISTORY_LIMIT)
+      .map((m) => (m.role === "assistant" ? { ...m, html: renderMarkdown(m.text) } : m)),
   };
 }
 
@@ -210,7 +251,8 @@ function onEvent(e) {
       return broadcast({ ev: "busy", value: true });
     case "agent_settled":
       partial = null;
-      return broadcast({ ev: "busy", value: false });
+      broadcast({ ev: "busy", value: false });
+      return refreshRecent();
     case "message_start":
       if (e.message?.role === "assistant") { partial = ""; broadcast({ ev: "start" }); }
       return;
@@ -218,10 +260,21 @@ function onEvent(e) {
       if (e.assistantMessageEvent?.type === "text_delta") {
         partial = (partial ?? "") + e.assistantMessageEvent.delta;
         broadcast({ ev: "delta", text: e.assistantMessageEvent.delta });
+        // Re-render the growing reply at most every 120ms.
+        renderTimer ??= setTimeout(() => {
+          renderTimer = null;
+          if (partial) broadcast({ ev: "html", html: renderMarkdown(partial) });
+        }, 120);
       }
       return;
     case "message_end":
-      if (e.message?.role === "assistant") { partial = null; broadcast({ ev: "end", text: textOf(e.message) }); }
+      if (e.message?.role === "assistant") {
+        clearTimeout(renderTimer);
+        renderTimer = null;
+        partial = null;
+        const text = textOf(e.message);
+        broadcast({ ev: "end", text, html: text ? renderMarkdown(text) : "", ts: e.message.timestamp ?? Date.now() });
+      }
       return;
     case "tool_execution_start": {
       const a = e.args || {};
@@ -277,9 +330,42 @@ async function bind() {
   fs.writeFileSync(LAST_FILE, JSON.stringify({ file: s.sessionFile, cwd: cwdOf(s) }));
   broadcast(snapshot());
   broadcast({ ev: "commands", list: commandList() });
+  refreshRecent();
+}
+
+// Quick-switch chips: the current chat plus the most recent others.
+async function refreshRecent() {
+  const current = session().sessionFile;
+  const all = (await SessionManager.listAll()).sort((a, b) => b.modified - a.modified);
+  const chip = (i) => ({
+    path: i.path,
+    title: i.name || (i.cwd.startsWith(CHATTY + "/") ? path.basename(i.cwd).replace(/^\d{4}-\d{2}-\d{2}-/, "") : "")
+      || i.firstMessage.replace(/\s+/g, " ").slice(0, 24) || "chat",
+    current: i.path === current,
+  });
+  const others = all.filter((i) => i.path !== current).slice(0, current ? 4 : 5).map(chip);
+  const mine = all.find((i) => i.path === current);
+  const self = mine ? chip(mine) : { path: current, title: snapshot().title || "new", current: true };
+  recent = current ? [self, ...others] : others;
+  broadcast({ ev: "recent", list: recent });
+}
+
+// Leaving a chat that never got a message removes its empty workspace.
+function dropIfEmpty() {
+  const s = runtime?.session;
+  if (!s || s.messages.length) return;
+  const dir = cwdOf(s);
+  // Extensions may leave an empty .pi/ skeleton (e.g. .pi/plans); any file
+  // means the workspace was used.
+  const hasFiles = (d) => fs.readdirSync(d, { withFileTypes: true })
+    .some((e) => !e.isDirectory() || hasFiles(path.join(d, e.name)));
+  try {
+    if (dir.startsWith(CHATTY + "/") && !hasFiles(dir)) fs.rmSync(dir, { recursive: true });
+  } catch {}
 }
 
 async function start(cwd, sessionManager) {
+  dropIfEmpty();
   unsubscribe?.();
   await runtime?.dispose();
   runtime = await createAgentSessionRuntime(createRuntime, { cwd, agentDir: getAgentDir(), sessionManager });
@@ -292,6 +378,7 @@ const newChat = (name) => {
 };
 
 async function resume(file) {
+  dropIfEmpty();
   await runtime.switchSession(file);
   await bind();
 }
@@ -352,6 +439,7 @@ async function handle(client, msg) {
   switch (msg.op) {
     case "sync":
       send(client, snapshot());
+      send(client, { ev: "recent", list: recent });
       return send(client, { ev: "commands", list: commandList() });
     case "commands":
       return send(client, { ev: "commands", list: commandList() });
@@ -364,12 +452,18 @@ async function handle(client, msg) {
     case "abort":
       return s.abort();
     case "pick": {
-      const items = msg.kind === "models" ? pickModels(msg.query || "") : await pickSessions(msg.query || "");
-      return send(client, { ev: "pick", kind: msg.kind, query: msg.query || "", items });
+      const query = msg.query || "";
+      const items = msg.kind === "models" ? pickModels(query)
+        : msg.kind === "folders" ? await pickFolders(query)
+        : await pickSessions(query);
+      return send(client, { ev: "pick", kind: msg.kind, query, items });
     }
     case "new":
       return newChat(msg.name);
+    case "newin":
+      return start(msg.dir, SessionManager.create(msg.dir));
     case "resume":
+      if (msg.path === session().sessionFile) return;
       return resume(msg.path);
     case "model":
       return setModel(msg.provider, msg.id);
@@ -385,10 +479,14 @@ async function handle(client, msg) {
 process.on("unhandledRejection", (err) => console.error("unhandled:", err));
 process.on("uncaughtException", (err) => console.error("uncaught:", err));
 
+// Boot into the last chat; if it was never written (no messages), fall back
+// to the most recent chat workspace, and only then to a fresh one.
 let last = {};
 try { last = JSON.parse(fs.readFileSync(LAST_FILE, "utf8")); } catch {}
-if (last.file && fs.existsSync(last.file)) await start(last.cwd || HOME, SessionManager.open(last.file));
-else if (last.cwd && fs.existsSync(last.cwd)) await start(last.cwd, SessionManager.create(last.cwd));
+const lastChat = last.file && fs.existsSync(last.file) ? last
+  : (await SessionManager.listAll()).filter((i) => i.cwd.startsWith(CHATTY + "/"))
+    .sort((a, b) => b.modified - a.modified).map((i) => ({ file: i.path, cwd: i.cwd }))[0];
+if (lastChat) await start(lastChat.cwd, SessionManager.open(lastChat.file));
 else await newChat("chat");
 
 fs.rmSync(SOCKET, { force: true });
