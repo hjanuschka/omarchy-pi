@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# Install omarchy-pi: daemon deps, systemd user service, Omarchy plugin, keybind.
+# Install omarchy-pi: daemon deps, systemd user service, Omarchy plugin, and
+# (only with your consent) a keybinding.
 #
-#   ./install.sh                                   # bind Super+Shift+Space
-#   OMARCHY_PI_KEY="SUPER + ALT + P" ./install.sh  # pick another binding
-#   OMARCHY_PI_KEY=none ./install.sh               # leave bindings.lua alone
+#   ./install.sh                                    # asks before touching bindings.lua
+#   OMARCHY_PI_KEY="SUPER + SHIFT + SPACE" ./install.sh  # bind without asking
+#   OMARCHY_PI_KEY=none ./install.sh                # never touch bindings.lua
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 plugin_id="hjanuschka.omarchy-pi"
 plugins_dir="$HOME/.config/omarchy/plugins"
 bindings="$HOME/.config/hypr/bindings.lua"
-key="${OMARCHY_PI_KEY:-SUPER + SHIFT + SPACE}"
+default_key="SUPER + SHIFT + SPACE"
+key="${OMARCHY_PI_KEY:-}"
 
 die() { echo "omarchy-pi: $*" >&2; exit 1; }
 
@@ -49,7 +51,12 @@ fi
 omarchy-shell -q shell rescanPlugins
 omarchy plugin enable "$plugin_id" >/dev/null
 
-if [[ "$key" != "none" && -f "$bindings" ]] && ! grep -q "$plugin_id" "$bindings"; then
+# bindings.lua is user configuration: only edit it when asked to.
+if [[ -z "$key" && -t 0 && -f "$bindings" ]] && ! grep -q "$plugin_id" "$bindings"; then
+  read -r -p "Bind $default_key to the chat in $bindings? This replaces Omarchy's 'Toggle top bar' on that combo. [y/N] " answer
+  [[ "$answer" =~ ^[Yy]$ ]] && key="$default_key"
+fi
+if [[ -n "$key" && "$key" != "none" && -f "$bindings" ]] && ! grep -q "$plugin_id" "$bindings"; then
   cat >> "$bindings" <<EOF
 
 -- omarchy-pi: floating chat with the persistent pi daemon.
@@ -60,4 +67,10 @@ EOF
 fi
 
 omarchy restart shell >/dev/null 2>&1 || true
-if [[ "$key" != "none" ]]; then echo "omarchy-pi installed. $key to chat."; else echo "omarchy-pi installed."; fi
+if grep -qs "$plugin_id" "$bindings"; then
+  echo "omarchy-pi installed. Use your binding to open the chat."
+else
+  echo "omarchy-pi installed. Open it with: omarchy-shell shell toggle $plugin_id"
+  echo "To bind a key, add to $bindings:"
+  echo "  o.bind(\"$default_key\", \"Pi chat\", \"omarchy-shell shell toggle $plugin_id\")"
+fi

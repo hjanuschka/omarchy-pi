@@ -61,11 +61,12 @@ git clone https://github.com/hjanuschka/omarchy-pi && ./omarchy-pi/install.sh
 ```
 
 `install.sh` installs the daemon's npm dependencies, creates and starts the
-`omarchy-pi` systemd user service, enables the plugin, and binds
-`Super+Shift+Space` in `~/.config/hypr/bindings.lua` (replacing Omarchy's
-default "Toggle top bar" on that combo). Pick another key with
-`OMARCHY_PI_KEY="SUPER + ALT + P" ./install.sh`, or skip it with
-`OMARCHY_PI_KEY=none`.
+`omarchy-pi` systemd user service, and enables the plugin. It only edits
+`~/.config/hypr/bindings.lua` with your consent: run from a terminal it asks
+whether to bind `Super+Shift+Space` (which replaces Omarchy's default "Toggle
+top bar" on that combo); otherwise it prints the line to add yourself. Bind
+without asking with `OMARCHY_PI_KEY="SUPER + SHIFT + SPACE" ./install.sh`, or
+never touch the file with `OMARCHY_PI_KEY=none`.
 
 Remove with `./uninstall.sh`; chats and sessions are kept.
 
