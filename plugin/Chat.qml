@@ -24,8 +24,8 @@ Item {
   property bool replying: false         // the streaming reply has visible text
   property bool stick: true             // follow new output until the user scrolls up
   // Scroll feel: pixel-delta multiplier while fingers move, and momentum strength.
-  property real scrollGain: 1.6
-  property real flingGain: 1.0
+  property real notchPixels: Style.space(100)   // pixels per wheel notch (120 angle units)
+  property real flingGain: 0.9
   property string pickKind: ""          // "" = chat, else "sessions" | "models" | "folders"
   property bool newMenuOpen: false
   property var commands: []
@@ -747,40 +747,40 @@ Item {
     }
   }
 
-  // Qt's default wheel handling animates fixed steps, and Qt does no momentum
-  // for touchpad scrolls (the Magic Mouse daemon replays scrolls as a virtual
-  // touchpad and leaves momentum to the app, like Chrome does). So: move by
-  // pixel deltas 1:1 while the fingers are down, then fling with the stroke's
-  // velocity once events stop. Classic wheels get a fixed step per notch.
+  // Qt's default wheel handling animates fixed steps and does no touchpad
+  // momentum. The Magic Mouse daemon replays scrolls as a virtual touchpad
+  // whose Hyprland scroll_factor is tuned so *angle* units match a wheel; its
+  // pixel deltas are ~12x smaller. So scroll by angle units for both wheel and
+  // touchpad, and fling with the stroke's velocity when the fingers lift.
   component FastWheel: WheelHandler {
     id: handler
     required property Flickable view
     readonly property bool scrolling: idle.running
-    property real velocity: 0          // px/s, same sign as contentY decrease
+    property real velocity: 0          // px/s, positive = towards the top
     property real lastTime: 0
     target: null
     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
     onWheel: event => {
-      var touch = event.pixelDelta.y !== 0
-      var dy = touch ? event.pixelDelta.y * root.scrollGain : event.angleDelta.y / 120 * Style.space(100)
+      event.accepted = true
+      if (event.phase === Qt.ScrollEnd) { fling(); return }
+      var dy = event.angleDelta.y / 120 * root.notchPixels
       var max = view.originY + Math.max(0, view.contentHeight - view.height)
       view.cancelFlick()
       view.contentY = Math.max(view.originY, Math.min(max, view.contentY - dy))
       var now = Date.now()
       var dt = Math.max(4, now - lastTime)
-      var v = dy * 1000 / dt
-      velocity = touch && dt < 80 ? velocity * 0.6 + v * 0.4 : (touch ? v : 0)
+      var touch = event.phase === Qt.ScrollUpdate || event.phase === Qt.ScrollBegin
+      velocity = !touch ? 0 : dt < 80 ? velocity * 0.6 + (dy * 1000 / dt) * 0.4 : dy * 1000 / dt
       lastTime = now
-      event.accepted = true
       idle.restart()
     }
-    property Timer idle: Timer {
-      interval: 60
-      onTriggered: {
-        if (Math.abs(handler.velocity) > 150) handler.view.flick(0, handler.velocity * root.flingGain)
-        handler.velocity = 0
-      }
+    function fling() {
+      idle.stop()
+      if (Math.abs(velocity) > 150) view.flick(0, velocity * root.flingGain)
+      velocity = 0
     }
+    // Fallback for devices that never send ScrollEnd.
+    property Timer idle: Timer { interval: 80; onTriggered: handler.fling() }
   }
 
   component MenuItem: Rectangle {
