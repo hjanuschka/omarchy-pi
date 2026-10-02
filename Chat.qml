@@ -246,8 +246,7 @@ Item {
 
   PanelWindow {
     visible: root.opened
-    anchors { bottom: true; right: true }
-    margins { bottom: Style.gapsOut + Style.space(12); right: Style.gapsOut + Style.space(12) }
+    // No anchors: the compositor centers the surface on the focused monitor.
     implicitWidth: Style.space(460)
     implicitHeight: Style.space(620)
     color: "transparent"
