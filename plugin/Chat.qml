@@ -755,7 +755,7 @@ Item {
   component FastWheel: WheelHandler {
     id: handler
     required property Flickable view
-    readonly property bool scrolling: idle.running
+    readonly property bool scrolling: idle.running || glide.running
     property real velocity: 0          // px/s, positive = towards the top
     property real lastTime: 0
     target: null
@@ -764,9 +764,8 @@ Item {
       event.accepted = true
       if (event.phase === Qt.ScrollEnd) { fling(); return }
       var dy = event.angleDelta.y / 120 * root.notchPixels
-      var max = view.originY + Math.max(0, view.contentHeight - view.height)
-      view.cancelFlick()
-      view.contentY = Math.max(view.originY, Math.min(max, view.contentY - dy))
+      glide.stop()
+      view.contentY = clamp(view.contentY - dy)
       var now = Date.now()
       var dt = Math.max(4, now - lastTime)
       var touch = event.phase === Qt.ScrollUpdate || event.phase === Qt.ScrollBegin
@@ -774,10 +773,24 @@ Item {
       lastTime = now
       idle.restart()
     }
+    function clamp(y) {
+      return Math.max(view.originY, Math.min(view.originY + Math.max(0, view.contentHeight - view.height), y))
+    }
+    // Flickable.flick() is a no-op after programmatic contentY changes, so the
+    // glide is an ease-out animation whose distance follows the lift velocity.
     function fling() {
       idle.stop()
-      if (Math.abs(velocity) > 150) view.flick(0, velocity * root.flingGain)
+      if (Math.abs(velocity) > 150) {
+        glide.to = clamp(view.contentY - velocity * 0.35 * root.flingGain)
+        glide.duration = Math.min(1100, 350 + Math.abs(velocity) * 0.12)
+        glide.start()
+      }
       velocity = 0
+    }
+    property NumberAnimation glide: NumberAnimation {
+      target: handler.view
+      property: "contentY"
+      easing.type: Easing.OutCubic
     }
     // Fallback for devices that never send ScrollEnd.
     property Timer idle: Timer { interval: 80; onTriggered: handler.fling() }
