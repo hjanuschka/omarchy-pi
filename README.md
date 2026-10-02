@@ -82,6 +82,7 @@ Remove with `./uninstall.sh`; chats and sessions are kept.
 | `chats` | fuzzy + recency + full-text search over every pi session, ending in `+ new: <query>` |
 | `new` / `▾` | new try-style chat, or `new in folder…` (zoxide + past session dirs; type `~/…` to browse) |
 | five chips | switch between your most recent chats |
+| status bar | while the agent works: the running tool and command, elapsed time (red after a minute), and `stop`, which kills the tool |
 
 Built-in commands: `/model [query]`, `/thinking [level]`, `/new [name]`,
 `/sessions [query]`, `/compact [instructions]`, `/name <name>`. Everything

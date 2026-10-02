@@ -23,6 +23,9 @@ Item {
   property string thinking: ""
   property int streamIndex: -1
   property bool replying: false         // the streaming reply has visible text
+  property var running: []              // tool calls in flight: {id, name, detail, started}
+  property real busySince: 0
+  property real now: Date.now()
   property bool stick: true             // follow new output until the user scrolls up
   // Scroll feel: pixel-delta multiplier while fingers move, and momentum strength.
   property real notchPixels: Style.space(100)   // pixels per wheel notch (120 angle units)
@@ -90,6 +93,8 @@ Item {
       connected = true
       needsInstall = false
       busy = m.busy
+      busySince = m.busySince || 0
+      running = m.running || []
       title = m.title || ""
       model = m.model || ""
       thinking = m.thinking || ""
@@ -103,7 +108,11 @@ Item {
       }
       if (m.partial !== null && m.partial !== undefined) startReply(m.partial, m.partialHtml)
       break
-    case "busy": busy = m.value; break
+    case "busy":
+      busy = m.value
+      if (m.value) busySince = m.since || Date.now()
+      else running = []
+      break
     case "start": startReply("", ""); break
     case "delta":
       if (streamIndex < 0) startReply("", "")
@@ -126,7 +135,11 @@ Item {
       streamIndex = -1
       replying = false
       break
-    case "tool": note("tool", m.name + (m.detail ? "  " + m.detail : "")); break
+    case "tool":
+      note("tool", m.name + (m.detail ? "  " + m.detail : ""))
+      running = running.concat([{ id: m.id, name: m.name, detail: m.detail, started: m.started || Date.now() }])
+      break
+    case "tool_end": running = running.filter(t => t.id !== m.id); break
     case "info": note("info", m.text); break
     case "error": note("error", m.text || "error"); break
     case "commands": commands = m.list; break
@@ -205,6 +218,11 @@ Item {
     input.cursorPosition = input.text.length
   }
 
+  function elapsed(since) {
+    var s = Math.max(0, Math.floor((now - since) / 1000))
+    return s < 60 ? s + "s" : Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0")
+  }
+
   ListModel { id: messages }
   ListModel { id: picks }
   ListModel { id: completions }
@@ -228,6 +246,7 @@ Item {
     onExited: exitCode => root.needsInstall = exitCode !== 0
   }
   Process { id: copier }
+  Timer { running: root.busy && root.opened; interval: 1000; repeat: true; triggeredOnStart: true; onTriggered: root.now = Date.now() }
   Timer { id: retry; interval: 800; onTriggered: if (root.opened && !conn.running) conn.running = true }
   Timer { id: searchDebounce; interval: 150; onTriggered: root.send({ op: "pick", kind: root.pickKind, query: search.text }) }
 
@@ -293,7 +312,6 @@ Item {
             color: root.fg
             font { family: root.font; pixelSize: Style.font.body; bold: true }
           }
-          Pill { visible: root.busy && !root.pickKind; label: "stop"; onClicked: root.send({ op: "abort" }) }
           Pill {
             visible: !root.pickKind
             shrinks: true
@@ -525,7 +543,7 @@ Item {
             height: dots.visible ? dots.height + Style.space(8) : 0
             Rectangle {
               id: dots
-              visible: root.busy && !root.replying
+              visible: root.busy && !root.replying && root.running.length === 0
               y: Style.space(6)
               width: Style.space(54); height: Style.space(30)
               radius: root.radius
@@ -578,6 +596,52 @@ Item {
               opacity: 0.45
               font { family: root.font; pixelSize: Style.font.body }
             }
+          }
+        }
+
+        // What the agent is doing right now, with a way out. Survives reopening:
+        // the daemon reports in-flight tools in its snapshot.
+        Rectangle {
+          id: status
+          readonly property var tool: root.running.length ? root.running[root.running.length - 1] : null
+          readonly property real since: tool ? tool.started : root.busySince
+          readonly property bool slow: root.now - since > 60000
+          visible: root.busy && !root.pickKind
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(32)
+          radius: height / 2
+          color: Util.alpha(slow ? Color.urgent : root.fg, 0.07)
+          RowLayout {
+            anchors { fill: parent; leftMargin: Style.space(12); rightMargin: Style.space(4) }
+            spacing: Style.space(8)
+            Rectangle {
+              Layout.preferredWidth: Style.space(7); Layout.preferredHeight: Style.space(7)
+              radius: width / 2
+              color: status.slow ? Color.urgent : root.accent
+              SequentialAnimation on opacity {
+                running: status.visible
+                loops: Animation.Infinite
+                NumberAnimation { to: 0.25; duration: 600 }
+                NumberAnimation { to: 1; duration: 600 }
+              }
+            }
+            Text {
+              Layout.fillWidth: true
+              text: status.tool ? "⚙ " + status.tool.name + (status.tool.detail ? " · " + status.tool.detail : "")
+                    : root.replying ? "writing…" : "thinking…"
+              elide: Text.ElideRight
+              color: root.fg
+              opacity: 0.75
+              font { family: status.tool ? "monospace" : root.font; pixelSize: Style.font.caption }
+            }
+            Text {
+              visible: status.since > 0
+              text: root.elapsed(status.since)
+              color: status.slow ? Color.urgent : root.fg
+              opacity: status.slow ? 1 : 0.55
+              font { family: "monospace"; pixelSize: Style.font.caption }
+            }
+            Pill { label: "stop"; onClicked: root.send({ op: "abort" }) }
           }
         }
 

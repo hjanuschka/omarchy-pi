@@ -12,7 +12,8 @@
 // daemon -> client:
 //   {ev:"snapshot",...} {ev:"start"} {ev:"delta",text} {ev:"html",html}
 //   {ev:"end",text,html,ts} {ev:"recent",list}
-//   {ev:"tool",name,detail} {ev:"busy",value} {ev:"info",text} {ev:"error",text}
+//   {ev:"tool",id,name,detail,started} {ev:"tool_end",id}
+//   {ev:"busy",value,since} {ev:"info",text} {ev:"error",text}
 //   {ev:"commands",list} {ev:"pick",kind,query,items} {ev:"view",kind,query}
 import fs from "node:fs";
 import net from "node:net";
@@ -74,6 +75,13 @@ let unsubscribe;
 let partial = null; // text of the assistant reply currently streaming
 let renderTimer = null;
 let recent = [];
+let busySince = 0;
+const running = new Map(); // toolCallId -> {id, name, detail, started}
+
+function toolDetail(args) {
+  const a = args || {};
+  return String(a.command ?? a.path ?? a.file_path ?? a.pattern ?? a.query ?? "").replace(/\s+/g, " ").slice(0, 200);
+}
 
 const send = (client, msg) => client.write(JSON.stringify(msg) + "\n");
 const broadcast = (msg) => clients.forEach((c) => send(c, msg));
@@ -224,6 +232,21 @@ function displayText(message) {
   return skill ? `/skill:${skill[1]} ${skill[2] ?? ""}`.trim() : text;
 }
 
+// Transcript for the panel: user/assistant text, plus each tool call as a
+// line, so a reopened chat shows what the agent did.
+function history(messages) {
+  const out = [];
+  for (const m of messages) {
+    if (m.role === "user") out.push({ role: "user", text: displayText(m), ts: m.timestamp });
+    if (m.role !== "assistant") continue;
+    const text = textOf(m);
+    if (text.trim()) out.push({ role: "assistant", text, ts: m.timestamp });
+    for (const b of Array.isArray(m.content) ? m.content : [])
+      if (b?.type === "toolCall") out.push({ role: "tool", text: `${b.name}  ${toolDetail(b.arguments)}`.trim(), ts: m.timestamp });
+  }
+  return out.filter((m) => m.text.trim()).slice(-HISTORY_LIMIT);
+}
+
 function snapshot() {
   const s = session();
   return {
@@ -234,13 +257,12 @@ function snapshot() {
     model: s.model?.name || s.model?.id || "",
     thinking: s.thinkingLevel,
     busy: s.isStreaming,
+    busySince: s.isStreaming ? busySince : 0,
+    running: [...running.values()],
     partial,
     partialHtml: partial ? renderMarkdown(partial) : "",
-    messages: s.messages
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role, text: displayText(m).slice(0, TEXT_LIMIT), ts: m.timestamp }))
-      .filter((m) => m.text.trim())
-      .slice(-HISTORY_LIMIT)
+    messages: history(s.messages)
+      .map((m) => ({ ...m, text: m.text.slice(0, TEXT_LIMIT) }))
       .map((m) => (m.role === "assistant" ? { ...m, html: renderMarkdown(m.text) } : m)),
   };
 }
@@ -248,9 +270,11 @@ function snapshot() {
 function onEvent(e) {
   switch (e.type) {
     case "agent_start":
-      return broadcast({ ev: "busy", value: true });
+      busySince = Date.now();
+      return broadcast({ ev: "busy", value: true, since: busySince });
     case "agent_settled":
       partial = null;
+      running.clear();
       broadcast({ ev: "busy", value: false });
       return refreshRecent();
     case "message_start":
@@ -277,10 +301,13 @@ function onEvent(e) {
       }
       return;
     case "tool_execution_start": {
-      const a = e.args || {};
-      const detail = a.command ?? a.path ?? a.file_path ?? a.pattern ?? "";
-      return broadcast({ ev: "tool", name: e.toolName, detail: String(detail).slice(0, 200) });
+      const tool = { id: e.toolCallId, name: e.toolName, detail: toolDetail(e.args), started: Date.now() };
+      running.set(tool.id, tool);
+      return broadcast({ ev: "tool", ...tool });
     }
+    case "tool_execution_end":
+      running.delete(e.toolCallId);
+      return broadcast({ ev: "tool_end", id: e.toolCallId });
   }
 }
 
@@ -323,6 +350,7 @@ const uiContext = {
 async function bind() {
   unsubscribe?.();
   partial = null;
+  running.clear();
   const s = session();
   await s.bindExtensions({ uiContext, onError: (err) => broadcast({ ev: "error", text: String(err?.error ?? err) }) });
   unsubscribe = s.subscribe(onEvent);
