@@ -19,7 +19,7 @@ die() { echo "omarchy-pi: $*" >&2; exit 1; }
 node="$(command -v node)" || die "node >= 22.19 is required"
 "$node" -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a===22&&b>=19)?0:1)' \
   || die "node >= 22.19 is required (found $("$node" --version))"
-command -v socat >/dev/null || die "socat is required (sudo pacman -S socat)"
+command -v socat >/dev/null || die "socat is required; install it with your package manager"
 command -v pi >/dev/null || echo "omarchy-pi: note: pi CLI not found; the daemon still uses ~/.pi, but set up auth with pi first"
 
 (cd "$here/daemon" && npm install --silent --omit=dev --no-bin-links)
